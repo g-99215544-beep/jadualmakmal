@@ -1,5 +1,5 @@
 // ==========================================
-// database.js — Firebase Module (Stable + Chat Comments + Maintenance)
+// database.js — Firebase Module (Schedule + Archive + Chat + Maintenance + Future Bookings)
 // ==========================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
@@ -39,8 +39,9 @@ const PATHS = {
   classOptions: "classOptions",
   subjectOptions: "subjectOptions",
   lastRolloverDate: "lastRolloverDate",
-  weekComments: "weekComments",     // chat minggu semasa (array)
-  maintenance: "maintenance"        // slot maintenance
+  weekComments: "weekComments",     // chat minggu semasa
+  maintenance: "maintenance",       // slot maintenance
+  futureBookings: "futureBookings"  // senarai tempahan akan datang
 };
 
 // ==============================
@@ -71,10 +72,9 @@ export async function loadInitialData() {
     classOptions: data[PATHS.classOptions] || [],
     subjectOptions: data[PATHS.subjectOptions] || [],
     lastRolloverDate: data[PATHS.lastRolloverDate] || null,
-    // Chat minggu semasa (array mesej)
     weekComments: data[PATHS.weekComments] || [],
-    // Peta maintenance (hari -> period -> true/false)
-    maintenance: data[PATHS.maintenance] || null
+    maintenance: data[PATHS.maintenance] || null,
+    futureBookings: data[PATHS.futureBookings] || []
   };
 }
 
@@ -149,7 +149,6 @@ export async function saveLastRolloverDateToDB(dateString) {
 
 // ==============================
 // Simpan CHAT minggu semasa
-// weekComments = [{id, name, text, time}, ...]
 // ==============================
 export async function saveWeekCommentsToDB(commentsArray) {
   try {
@@ -167,5 +166,16 @@ export async function saveMaintenanceToDB(maintenanceObj) {
     await set(ref(db, PATHS.maintenance), maintenanceObj || {});
   } catch (err) {
     console.error("❌ Error simpan maintenance:", err);
+  }
+}
+
+// ==============================
+// Simpan Senarai Tempahan Akan Datang
+// ==============================
+export async function saveFutureBookingsToDB(futureBookingsArray) {
+  try {
+    await set(ref(db, PATHS.futureBookings), futureBookingsArray || []);
+  } catch (err) {
+    console.error("❌ Error simpan futureBookings:", err);
   }
 }

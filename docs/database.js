@@ -51,7 +51,8 @@ export async function loadInitialData() {
     lastRolloverDate,
     weekComments,
     maintenance,
-    futureBookings
+    futureBookings,
+    queueSchedule
   ] = await Promise.all([
     safeGet("schedule", null),
     safeGet("archive", []),
@@ -62,7 +63,8 @@ export async function loadInitialData() {
     safeGet("lastRolloverDate", null),
     safeGet("weekComments", []),
     safeGet("maintenance", {}),
-    safeGet("futureBookings", [])
+    safeGet("futureBookings", []),
+    safeGet("queueSchedule", null)
   ]);
 
   return {
@@ -75,7 +77,8 @@ export async function loadInitialData() {
     lastRolloverDate,
     weekComments,
     maintenance,
-    futureBookings
+    futureBookings,
+    queueSchedule
   };
 }
 
@@ -116,4 +119,12 @@ export async function saveMaintenanceToDB(maintenance) {
 
 export async function saveFutureBookingsToDB(bookings) {
   await safeSet("futureBookings", bookings);
+}
+
+export async function saveQueueScheduleToDB(queueSchedule) {
+  await safeSet("queueSchedule", queueSchedule);
+}
+
+export async function clearQueueScheduleFromDB() {
+  await safeSet("queueSchedule", null);
 }

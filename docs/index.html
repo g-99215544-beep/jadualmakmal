@@ -108,6 +108,23 @@
       text-align: center;
       line-height: 1.2;
     }
+
+    .queue-label {
+      font-size: 10px;
+      font-weight: 600;
+      margin-top: 2px;
+      display: block;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .queue-label-filled {
+      color: #9a3412;
+    }
+
+    .queue-label-hint {
+      color: #c2410c;
+    }
   </style>
 </head>
 
@@ -138,6 +155,11 @@
         <button id="booking-open-btn"
           class="bg-emerald-600 text-white px-4 py-2 rounded-lg shadow-md hover:bg-emerald-700 transition duration-300 font-medium text-sm">
           Tempahan
+        </button>
+
+        <button id="queue-toggle-btn"
+          class="bg-orange-500 text-white px-4 py-2 rounded-lg shadow-md hover:bg-orange-600 transition duration-300 font-medium text-sm">
+          Mod Giliran
         </button>
 
         <!-- Butang komen disembunyikan -->
@@ -188,6 +210,11 @@
         <button id="archive-next"
           class="bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition shadow-sm">&gt;</button>
       </div>
+    </div>
+
+    <div id="queue-mode-banner"
+      class="hidden no-print mb-4 rounded-xl border border-orange-300 bg-orange-100 px-4 py-3 text-sm font-semibold text-orange-900 shadow-sm">
+      MOD GILIRAN AKTIF - Anda sedang mengisi giliran untuk MINGGU DEPAN. Setiap slot hanya boleh diisi sekali.
     </div>
 
     <!-- JADUAL -->
@@ -463,7 +490,9 @@
       saveLastRolloverDateToDB,
       saveWeekCommentsToDB,
       saveMaintenanceToDB,
-      saveFutureBookingsToDB
+      saveFutureBookingsToDB,
+      saveQueueScheduleToDB,
+      clearQueueScheduleFromDB
     } from "./database.js";
 
     dayjs.extend(dayjs_plugin_isoWeek);
@@ -559,6 +588,8 @@
     let currentWeekComments = [];
     let maintenance = {};
     let futureBookings = [];
+    let queueSchedule = null;
+    let isQueueMode = false;
 
     const tableHeader = document.querySelector("#schedule-table thead tr");
     const tableBody = document.getElementById("schedule-body");
@@ -620,6 +651,8 @@
     const bookingRequestsList = document.getElementById("booking-requests-list");
 
     const adminNotificationBadge = document.getElementById("admin-notification-badge");
+    const queueToggleBtn = document.getElementById("queue-toggle-btn");
+    const queueModeBanner = document.getElementById("queue-mode-banner");
 
     function showToast(msg, isError = false) {
       toast.textContent = msg;
@@ -639,6 +672,11 @@
     }
 
     function getDefaultWeekStart() { return dayjs().isoWeekday(1); }
+
+    function getQueueWeekStart() {
+      if (!currentWeekStart) currentWeekStart = getDefaultWeekStart();
+      return currentWeekStart.add(7, "day");
+    }
 
     function createEmptySchedule() {
       const data = {};
@@ -670,6 +708,61 @@
         futureBookings.some(b => b.status === "pending");
       if (hasPending) adminNotificationBadge.classList.remove("hidden");
       else adminNotificationBadge.classList.add("hidden");
+    }
+
+    function normalizeScheduleEntry(entry) {
+      return {
+        class: entry?.class || "",
+        subject: entry?.subject || ""
+      };
+    }
+
+    function hasScheduleEntry(entry) {
+      const normalized = normalizeScheduleEntry(entry);
+      return !!(normalized.class || normalized.subject);
+    }
+
+    function formatScheduleEntryText(entry, separator = " ") {
+      const normalized = normalizeScheduleEntry(entry);
+      const parts = [normalized.class, normalized.subject].filter(Boolean);
+      return parts.join(separator).trim();
+    }
+
+    function ensureQueueSchedule() {
+      if (!queueSchedule) queueSchedule = createEmptySchedule();
+      return queueSchedule;
+    }
+
+    function clearQueueCellVisual(cell) {
+      if (!cell) return;
+      cell.querySelectorAll(".queue-label").forEach(label => label.remove());
+      cell.classList.remove("bg-orange-50", "bg-orange-100", "ring-1", "ring-orange-300");
+      cell.dataset.queueLocked = "";
+    }
+
+    function updateQueueModeUI() {
+      if (!queueToggleBtn || !queueModeBanner) return;
+
+      const isArchiveView = archiveViewIndex !== -1;
+      queueToggleBtn.classList.toggle("hidden", isArchiveView);
+      queueModeBanner.classList.toggle("hidden", !isQueueMode || isArchiveView);
+
+      queueToggleBtn.textContent = isQueueMode ? "Mod Giliran: AKTIF" : "Mod Giliran";
+      queueToggleBtn.disabled = isArchiveView;
+      queueToggleBtn.className =
+        `px-4 py-2 rounded-lg shadow-md transition duration-300 font-medium text-sm ${isQueueMode
+          ? "bg-orange-700 text-white ring-2 ring-orange-300 hover:bg-orange-800"
+          : "bg-orange-500 text-white hover:bg-orange-600"}${isArchiveView ? " hidden opacity-50 cursor-not-allowed" : ""}`;
+    }
+
+    async function saveQueueScheduleToServer(showMsg = false) {
+      try {
+        await saveQueueScheduleToDB(queueSchedule);
+        if (showMsg) showToast("Giliran minggu depan telah disimpan!");
+      } catch (e) {
+        console.error(e);
+        showToast("Gagal menyimpan giliran minggu depan.", true);
+      }
     }
 
     // --------- CHAT ----------
@@ -837,6 +930,14 @@
     // --------- RENDER ----------
     function renderWeekDate() {
       if (!currentWeekStart) currentWeekStart = getDefaultWeekStart();
+      if (isQueueMode) {
+        const queueWeekStart = getQueueWeekStart();
+        const s = queueWeekStart.format("D");
+        const e = queueWeekStart.add(4, "day").format("D MMM YYYY").toUpperCase();
+        weekDateDisplay.textContent = `GILIRAN MINGGU DEPAN: ${s} - ${e}`;
+        return;
+      }
+
       const s = currentWeekStart.format("D");
       const e = currentWeekStart.add(4, "day").format("D MMM YYYY").toUpperCase();
       weekDateDisplay.textContent = `TARIKH: ${s} - ${e}`;
@@ -859,6 +960,11 @@
         return ns;
       }
       return d || createEmptySchedule();
+    }
+
+    function migrateOptionalScheduleData(d) {
+      if (!d) return null;
+      return migrateScheduleData(d);
     }
 
     function renderSchedule(data, isArchive = false) {
@@ -890,6 +996,7 @@
 
           const oldLabel = cell.querySelector(".booking-label");
           if (oldLabel) oldLabel.remove();
+          clearQueueCellVisual(cell);
           cell.classList.remove("bg-purple-100");
           cell.dataset.booking = "";
           classSel.style.display = "";
@@ -911,6 +1018,112 @@
       }
     }
 
+    function applyQueueRestrictions() {
+      if (!isQueueMode) return;
+
+      const activeQueueSchedule = ensureQueueSchedule();
+
+      Object.keys(DAYS_MAP).forEach(dayKey => {
+        for (let i = 1; i <= PERIODS_COUNT; i++) {
+          const cell = tableBody.querySelector(`td[data-day='${dayKey}'][data-period='${i}']`);
+          if (!cell) continue;
+
+          clearQueueCellVisual(cell);
+
+          const classSel = cell.querySelector("select[data-type='class']");
+          const subjSel = cell.querySelector("select[data-type='subject']");
+          const queueEntry = normalizeScheduleEntry(activeQueueSchedule[dayKey]?.[i]);
+          const currentEntry = normalizeScheduleEntry(currentSchedule[dayKey]?.[i]);
+          const isMaintenanceSlot = !!(maintenance[dayKey] && maintenance[dayKey][i]);
+
+          if (isMaintenanceSlot) continue;
+
+          if (hasScheduleEntry(queueEntry)) {
+            classSel.value = queueEntry.class;
+            subjSel.value = queueEntry.subject;
+            applySelectColor(classSel);
+            applySelectColor(subjSel);
+
+            classSel.disabled = true;
+            subjSel.disabled = true;
+            classSel.classList.add("cursor-not-allowed");
+            subjSel.classList.add("cursor-not-allowed");
+            cell.classList.add("bg-orange-100", "ring-1", "ring-orange-300");
+            cell.dataset.queueLocked = "1";
+
+            const label = document.createElement("span");
+            label.className = "queue-label queue-label-filled";
+            label.textContent = `${formatScheduleEntryText(queueEntry) || "-"} (Sudah diisi)`;
+            cell.appendChild(label);
+            continue;
+          }
+
+          classSel.disabled = false;
+          subjSel.disabled = false;
+          classSel.classList.remove("cursor-not-allowed");
+          subjSel.classList.remove("cursor-not-allowed");
+          cell.classList.add("bg-orange-50");
+
+          if (hasScheduleEntry(currentEntry)) {
+            const label = document.createElement("span");
+            label.className = "queue-label queue-label-hint";
+            label.textContent = `Dikunci: ${currentEntry.class || "-"}${currentEntry.subject ? "/" + currentEntry.subject : ""}`;
+            cell.appendChild(label);
+          }
+        }
+      });
+    }
+
+    function validateQueueSelection(dayKey, period) {
+      const cell = tableBody.querySelector(`td[data-day='${dayKey}'][data-period='${period}']`);
+      if (!cell) return false;
+
+      const classSel = cell.querySelector("select[data-type='class']");
+      const subjSel = cell.querySelector("select[data-type='subject']");
+      const selectedEntry = {
+        class: classSel.value || "",
+        subject: subjSel.value || ""
+      };
+      const currentEntry = normalizeScheduleEntry(currentSchedule[dayKey]?.[period]);
+
+      if (
+        selectedEntry.class &&
+        selectedEntry.subject &&
+        selectedEntry.class === currentEntry.class &&
+        selectedEntry.subject === currentEntry.subject
+      ) {
+        classSel.value = "";
+        subjSel.value = "";
+        applySelectColor(classSel);
+        applySelectColor(subjSel);
+        showToast("Gabungan ini dikunci untuk slot ini.", true);
+        return false;
+      }
+
+      return true;
+    }
+
+    async function toggleQueueMode() {
+      if (archiveViewIndex !== -1) {
+        showToast("Mod Giliran tidak boleh digunakan semasa melihat arkib.", true);
+        return;
+      }
+
+      isQueueMode = !isQueueMode;
+
+      if (isQueueMode) {
+        ensureQueueSchedule();
+        renderWeekDate();
+        renderSchedule(queueSchedule, false);
+        applyQueueRestrictions();
+      } else {
+        renderWeekDate();
+        renderSchedule(currentSchedule, false);
+      }
+
+      updateQueueModeUI();
+    }
+
     // --------- MAINTENANCE ----------
     function applyMaintenanceToTable() {
       if (!maintenance) return;
@@ -930,7 +1143,7 @@
             subjSel.classList.add("cursor-not-allowed");
           } else {
             cell.classList.remove("bg-gray-300", "opacity-70");
-            if (archiveViewIndex === -1 && cell.dataset.booking !== "1") {
+            if (archiveViewIndex === -1 && cell.dataset.booking !== "1" && cell.dataset.queueLocked !== "1") {
               classSel.disabled = false;
               subjSel.disabled = false;
               classSel.classList.remove("cursor-not-allowed");
@@ -1026,6 +1239,7 @@
     }
 
     function viewArchiveWeek(i) {
+      isQueueMode = false;
       archiveViewIndex = i;
       const e = weeklyArchive[i];
       renderSchedule(e.schedule, true);
@@ -1076,6 +1290,7 @@
         archiveStatus.textContent = currentWeekLabel || "Minggu Semasa";
         archiveViewIndex = -1;
       }
+      updateQueueModeUI();
     }
 
     // --------- ROLLOVER ----------
@@ -1095,7 +1310,20 @@
       weeklyArchive.unshift(entry);
       await saveArchiveToDB(weeklyArchive);
 
-      currentSchedule = createEmptySchedule();
+      const newSchedule = createEmptySchedule();
+      Object.keys(DAYS_MAP).forEach(dayKey => {
+        for (let i = 1; i <= PERIODS_COUNT; i++) {
+          const queuedEntry = normalizeScheduleEntry(queueSchedule?.[dayKey]?.[i]);
+          const currentEntry = normalizeScheduleEntry(currentSchedule?.[dayKey]?.[i]);
+          newSchedule[dayKey][i] = hasScheduleEntry(queuedEntry) ? queuedEntry : currentEntry;
+        }
+      });
+
+      queueSchedule = null;
+      await clearQueueScheduleFromDB();
+      isQueueMode = false;
+
+      currentSchedule = newSchedule;
       await saveScheduleToServer(false);
 
       currentWeekStart = currentWeekStart.add(7, "days");
@@ -1224,6 +1452,49 @@
     // --------- TEMPAHAN ----------
     async function saveFutureBookingsToServer() {
       await saveFutureBookingsToDB(futureBookings);
+    }
+
+    function resetBookingEffects() {
+      Object.keys(DAYS_MAP).forEach(dayKey => {
+        for (let i = 1; i <= PERIODS_COUNT; i++) {
+          const cell = tableBody.querySelector(`td[data-day='${dayKey}'][data-period='${i}']`);
+          if (!cell || cell.dataset.booking !== "1") continue;
+
+          const label = cell.querySelector(".booking-label");
+          if (label) label.remove();
+          cell.dataset.booking = "";
+          cell.classList.remove("bg-purple-100");
+
+          const classSel = cell.querySelector("select[data-type='class']");
+          const subjSel = cell.querySelector("select[data-type='subject']");
+          const pvc = cell.querySelector(".print-class-value");
+          const pvs = cell.querySelector(".print-subject-value");
+
+          if (classSel) {
+            classSel.style.display = "";
+            if (archiveViewIndex === -1 && !(maintenance[dayKey] && maintenance[dayKey][i]) && cell.dataset.queueLocked !== "1") {
+              classSel.disabled = false;
+              classSel.classList.remove("cursor-not-allowed");
+            } else {
+              classSel.disabled = true;
+              classSel.classList.add("cursor-not-allowed");
+            }
+          }
+          if (subjSel) {
+            subjSel.style.display = "";
+            if (archiveViewIndex === -1 && !(maintenance[dayKey] && maintenance[dayKey][i]) && cell.dataset.queueLocked !== "1") {
+              subjSel.disabled = false;
+              subjSel.classList.remove("cursor-not-allowed");
+            } else {
+              subjSel.disabled = true;
+              subjSel.classList.add("cursor-not-allowed");
+            }
+          }
+
+          if (pvc && classSel) pvc.textContent = classSel.value || "";
+          if (pvs && subjSel) pvs.textContent = subjSel.value || "";
+        }
+      });
     }
 
     function openBookingModal() {
@@ -1355,50 +1626,8 @@
     }
 
     function applyBookingsToTable() {
-      if (!futureBookings || !futureBookings.length || !currentWeekStart) return;
-
-      // reset effect tempahan
-      Object.keys(DAYS_MAP).forEach(dayKey => {
-        for (let i = 1; i <= PERIODS_COUNT; i++) {
-          const cell = tableBody.querySelector(`td[data-day='${dayKey}'][data-period='${i}']`);
-          if (!cell) continue;
-          if (cell.dataset.booking === "1") {
-            const label = cell.querySelector(".booking-label");
-            if (label) label.remove();
-            cell.dataset.booking = "";
-            cell.classList.remove("bg-purple-100");
-
-            const classSel = cell.querySelector("select[data-type='class']");
-            const subjSel = cell.querySelector("select[data-type='subject']");
-            const pvc = cell.querySelector(".print-class-value");
-            const pvs = cell.querySelector(".print-subject-value");
-
-            if (classSel) {
-              classSel.style.display = "";
-              if (archiveViewIndex === -1 && !(maintenance[dayKey] && maintenance[dayKey][i])) {
-                classSel.disabled = false;
-                classSel.classList.remove("cursor-not-allowed");
-              } else {
-                classSel.disabled = true;
-                classSel.classList.add("cursor-not-allowed");
-              }
-            }
-            if (subjSel) {
-              subjSel.style.display = "";
-              if (archiveViewIndex === -1 && !(maintenance[dayKey] && maintenance[dayKey][i])) {
-                subjSel.disabled = false;
-                subjSel.classList.remove("cursor-not-allowed");
-              } else {
-                subjSel.disabled = true;
-                subjSel.classList.add("cursor-not-allowed");
-              }
-            }
-
-            if (pvc && classSel) pvc.textContent = classSel.value || "";
-            if (pvs && subjSel) pvs.textContent = subjSel.value || "";
-          }
-        }
-      });
+      resetBookingEffects();
+      if (archiveViewIndex !== -1 || isQueueMode || !futureBookings || !futureBookings.length || !currentWeekStart) return;
 
       const weekStart = currentWeekStart.startOf("day");
       const weekEnd = weekStart.add(4, "day");
@@ -1467,9 +1696,35 @@
     }
 
     function initEventListeners() {
-      tableBody.addEventListener("change", e => {
+      tableBody.addEventListener("change", async e => {
         if (e.target.tagName === "SELECT") {
           applySelectColor(e.target);
+
+          if (isQueueMode) {
+            const dayKey = e.target.dataset.day;
+            const period = parseInt(e.target.dataset.period, 10);
+            const cell = tableBody.querySelector(`td[data-day='${dayKey}'][data-period='${period}']`);
+            const classSel = cell.querySelector("select[data-type='class']");
+            const subjSel = cell.querySelector("select[data-type='subject']");
+
+            if (!classSel.value && !subjSel.value) {
+              ensureQueueSchedule()[dayKey][period] = { class: "", subject: "" };
+              applyQueueRestrictions();
+              return;
+            }
+
+            if (!classSel.value || !subjSel.value) return;
+            if (!validateQueueSelection(dayKey, period)) return;
+
+            ensureQueueSchedule()[dayKey][period] = {
+              class: classSel.value,
+              subject: subjSel.value
+            };
+            await saveQueueScheduleToServer(true);
+            applyQueueRestrictions();
+            return;
+          }
+
           clearTimeout(autoSaveTimer);
           updateScheduleDataFromTable();
           autoSaveTimer = setTimeout(() => saveScheduleToServer(false), 500);
@@ -1524,6 +1779,7 @@
 
       bookingOpenBtn.onclick = openBookingModal;
       bookingCancelBtn.onclick = closeBookingModal;
+      if (queueToggleBtn) queueToggleBtn.onclick = toggleQueueMode;
       bookingModal.addEventListener("click", e => {
         if (e.target === bookingModal) closeBookingModal();
       });
@@ -1648,6 +1904,7 @@
         currentWeekLabel = initial.weekLabel || "";
         lastRolloverDate = initial.lastRolloverDate ? dayjs(initial.lastRolloverDate) : null;
         currentSchedule = migrateScheduleData(initial.schedule);
+        queueSchedule = migrateOptionalScheduleData(initial.queueSchedule);
         renderWeekDate();
         renderSchedule(currentSchedule, false);
         updateArchiveNav();
@@ -1669,6 +1926,7 @@
 
         initEventListeners();
         initAdminPanel();
+        updateQueueModeUI();
 
         await checkWeeklyRollover(initial.lastRolloverDate);
       } catch (e) {
